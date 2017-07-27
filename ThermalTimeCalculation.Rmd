@@ -1,0 +1,170 @@
+ ---
+title: "Thermal Time calc"
+author: "Ed"
+date: "27 July 2017"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, warning=FALSE}
+
+library (dplyr)
+library (ggplot2)
+library(agricolae)
+library(knitr)
+library (lubridate)
+library(scales)
+
+```
+
+
+
+```{r readData}
+setwd("C:\\GitHubRepos\\Xiumei")
+getwd()
+
+#create file
+df_We <- read.table("lincoln.met",header=TRUE)
+df_We$date <- dmy(df_We$date)
+summary(df_We)
+```
+
+## Graph it 
+
+```{r, fig.height=10, fig.width=10}
+
+df_We %>%
+  ggplot(aes(x=date,y=maxt)) +
+  geom_point()
+
+```
+
+## Define Tt cardinal temperatures
+
+Considered an overall average the following references:
+Tb: 0.0
+Top range:18-25
+Tmax: 40
+
+
+```{r}
+#Create Thermal time cardinal temperatures (lucerne.xml in APSIM line 206)
+tt_card <- data.frame(temp=c(1.0,  5.0,  10,  15,  30,  40),
+                      TT=c(0.0,  3.0,  6.5, 10,  25,  0.0))
+tt_card %>%
+  ggplot(aes(x=temp, y=TT))+
+  labs(x="Temperature (degree Celsius)")+
+  labs(y="Thermal Time (oCd)") +
+  geom_line()
+
+```
+
+```{r}
+
+# Create and test interpolation function 
+
+temp_ref  <- 25 # x-axes reference
+temp <- tt_card$temp # x-axes
+TT <- tt_card$TT # y-axes
+
+
+int_func <- function(temp,TT,temp_ref){
+
+  # if temp is too low or too high give extreme TT values
+ if(temp_ref>temp[length(temp)]) {
+   
+   out <- TT[length(TT)] 
+   
+ } else if (temp_ref<temp[1]) {
+   
+   out <- TT[1]
+   
+ } else {
+   
+   # else interpolate
+   
+   tryCatch(  
+   
+  out <- approx(temp, TT, xout = temp_ref, 
+         method="linear", 
+         rule = 2)$y,
+  error = function(e) 
+  {
+  out <- NA
+  }
+) 
+  
+} # end if check
+
+  return(out)  
+  
+ }
+  
+int_func(temp,TT,temp_ref)
+
+```
+
+```{r}
+
+#create REF Jones CA, Ritchie JT, Kiniry JR, Godwin DC (1986) Subroutine structure.In 'CERES-Maize: A simulation model of maize growth anddevelopment'. (Eds CA Jones, JR Kiniry) pp. 49-194. (Texas A&M University Press: Texas, USA
+
+TTfunc <- function(Tmin ,Tmax){         
+ 
+  if (Tmin>Tmax){
+   print("Tmin>Tmax")
+   break
+ } 
+  
+  TTav  <- 0
+  TTsum <- 0
+  
+  for(n in 1:8){ 
+    
+    tn <- 0
+    
+    TT_tn <- 0
+    
+    tn <- ((0.931 +  0.114*n - 0.0703 * n^2
+            + 0.0053 * n^3) * (Tmax-Tmin)) + 
+      Tmin # 8-h temperature
+    
+    TT_tn <- int_func(tt_card$temp, tt_card$T,tn) 
+    
+    TTsum <- max(TT_tn,0) + TTsum
+    
+ #   print(TT_tn)
+    
+    }
+  TTav <- TTsum/8
+  
+  return(TTav)
+  }
+
+TTfunc(10,30)
+
+```
+calculate fancy and simple TT 
+```{r ReadCalcTt}
+
+Tb=5 # assuming a base temperature of 8 for the simple calculation
+
+df_We_tt <- df_We %>%
+  filter(date>"2016-01-01") %>%
+  rowwise() %>%
+  mutate(TTday=TTfunc(mint,maxt), TTday_s=max(((mint+maxt)/2)-Tb,0), diff=(TTday_s/TTday)*100)
+
+
+
+```
+
+
+```{r}
+#Check TT  two methods : TTday_s = simple method (Tmean - Tbzero)
+df_We_tt  %>% 
+ggplot(aes(x=TTday_s, y= TTday)) +
+    geom_point(shape=21,alpha=0.2) +
+  geom_abline(intercept = 0, slope = 1)
+
+```
+
